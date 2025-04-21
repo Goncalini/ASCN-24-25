@@ -1,0 +1,10 @@
+---
+# Playbook to deploy Moonshot and its components
+# TO DO
+
+- name: "Install Moonshot with Kubernetes"
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: moonshot_deploy
+      tags: ["moonshot"]

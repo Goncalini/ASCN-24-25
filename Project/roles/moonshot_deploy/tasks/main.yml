@@ -1,0 +1,103 @@
+- name: Deploy the Postgresql Persistent Volume Claim
+  kubernetes.core.k8s:
+    definition: "{{ lookup('template', 'postgresql-pvc.yml') | from_yaml }}"
+    state: present
+    wait: true
+
+- name: Deploy the Postgresql Service
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'postgresql-service.yml') | from_yaml }}"
+    wait: true
+
+- name: Create a service for exposing moonshot
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'moonshot-service.yml') | from_yaml }}"
+    wait: true
+
+- name: Deploy the Postgresql Deployment
+  kubernetes.core.k8s:
+    definition: "{{ lookup('template', 'postgresql-deployment.yml') | from_yaml }}"
+    state: present
+    wait: true
+    wait_timeout: 180
+
+- name: Wait till Postgres pod is created
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: default
+    label_selectors:
+      - app=postgres
+    wait: true
+    wait_sleep: 5
+    wait_timeout: 180
+  register: postgres_pod_info
+
+- name: Wait until Postgres is ready to accept connections
+  kubernetes.core.k8s_exec:
+    namespace: default
+    pod: "{{ postgres_pod_info.resources[0].metadata.name }}"
+    command: psql -h localhost -U {{ db_user }} -d {{ db_name }} -c "\l"
+  register: postgres_login
+  retries: 3
+  delay: 10
+  until: postgres_login.rc == 0
+
+#########> Wait for the db to be fully ready
+
+- name: Create a Deployment for moonshot
+  kubernetes.core.k8s:
+    definition: "{{ lookup('template', 'moonshot-deployment.yml') | from_yaml }}"
+    state: present
+    wait: true
+    wait_timeout: 180
+
+- name: Wait till moonshot pod is created
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: default
+    label_selectors:
+      - app=moonshot
+    wait: true
+    wait_sleep: 5
+    wait_timeout: 180
+  register: moonshot_pod_info
+
+- debug: msg="{{ moonshot_pod_info.resources[0].metadata.name }}"
+
+- name: Wait for external IP address
+  kubernetes.core.k8s_info:
+    kind: Service
+    namespace: default
+    label_selectors:
+      - "app=moonshot"
+  register: service_info
+  until: service_info.resources[0].status.loadBalancer.ingress[0].ip is defined
+  retries: 60
+  delay: 5
+
+- name: Atribuição do IP à variável app_ip
+  set_fact:
+    app_ip: "{{ service_info.resources[0].status.loadBalancer.ingress[0].ip }}"
+
+- debug: msg="{{app_ip}}"
+
+- name: Alteração do valor da variável app_ip no ficheiro gcp.yml
+  replace:
+    path: inventory/gcp.yml
+    regexp: "app_ip:.+"
+    replace: "app_ip: '{{ app_ip }}'"
+
+- name: Atualizar o valor de app_port em gcp.yml
+  ansible.builtin.replace:
+    path: inventory/gcp.yml
+    regexp: "app_port:.+"
+    replace: "app_port: {{ app_port }}"
+
+- name: Deploy the Moonshot hpa
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'moonshot-hpa.yml') | from_yaml}}"
+    wait: yes
+    wait_timeout: 180

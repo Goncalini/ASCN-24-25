@@ -1,0 +1,43 @@
+---
+# Deployment for postgresql
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgresql-deployment
+  labels:
+    app: postgres
+    tier: database
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: postgres
+        tier: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:14
+        env: # The variables below could be set on a ConfigMap object
+        - name: POSTGRES_DB
+          value: "{{ db_name }}"
+        - name: POSTGRES_USER
+          value: "{{ db_user }}"
+        - name: POSTGRES_PASSWORD
+          value: "{{ db_password }}"
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-persistent-storage
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: postgres-persistent-storage
+        persistentVolumeClaim:
+          claimName: "{{ pvc_name }}"
